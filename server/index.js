@@ -1,6 +1,7 @@
 // index.js - Express server: REST API + static frontend
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const db = require('./db');
 const ai = require('./ai');
 
@@ -10,18 +11,21 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+const UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 // table column whitelist for safe inserts
 const COLS = {
   students: ['name', 'gender', 'seat_no', 'group_name', 'parent_name', 'parent_phone', 'notes'],
   lessons: ['title', 'unit', 'lesson_date', 'objectives', 'content', 'status'],
   homework: ['title', 'due_date', 'description', 'status'],
-  scores: ['student_id', 'exam_name', 'subject', 'score', 'date'],
+  scores: ['student_id', 'exam_name', 'subject', 'score', 'date', 'note'],
   todos: ['title', 'due_date', 'priority', 'done'],
   notices: ['title', 'content', 'audience', 'pinned', 'date'],
   communications: ['student_id', 'date', 'channel', 'summary', 'parent_reply'],
   resources: ['title', 'category', 'link', 'note'],
   events: ['title', 'event_date', 'event_time', 'type', 'note'],
-  timetable: ['day', 'period', 'subject', 'time', 'note'],
+  timetable: ['day', 'period', 'subject', 'time', 'note', 'week_from', 'week_to'],
   exams: ['name', 'date', 'note']
 };
 
@@ -100,7 +104,7 @@ app.post('/api/scores/bulk', async (req, res) => {
     const items = req.body.items || [];
     const created = [];
     for (const it of items) {
-      const keys = ['student_id', 'exam_name', 'subject', 'score', 'date'].filter(k => it[k] !== undefined);
+      const keys = ['student_id', 'exam_name', 'subject', 'score', 'date', 'note'].filter(k => it[k] !== undefined);
       const qs = keys.map(() => '?').join(',');
       const id = db.insert('INSERT INTO scores (' + keys.join(',') + ') VALUES (' + qs + ')', keys.map(k => it[k]));
       created.push(db.get('SELECT * FROM scores WHERE id=?', [id]));
@@ -109,7 +113,96 @@ app.post('/api/scores/bulk', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-['students', 'lessons', 'homework', 'scores', 'todos', 'notices', 'communications', 'resources', 'events', 'timetable'].forEach(registerCrud);
+['students', 'lessons', 'todos', 'notices', 'communications', 'resources', 'events', 'timetable'].forEach(registerCrud);
+
+// timetable: reset all rows
+app.delete('/api/timetable/reset', async (req, res) => {
+  try { db.run('DELETE FROM timetable'); res.json({ ok: true, deleted: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// homework: custom CRUD so creating an assignment auto-assigns students + tracks submissions
+app.get('/api/homework', async (req, res) => {
+  try { res.json(db.all('SELECT * FROM homework ORDER BY id DESC')); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/homework', async (req, res) => {
+  try {
+    const title = req.body.title || '';
+    const due_date = req.body.due_date || '';
+    const description = req.body.description || '';
+    const status = req.body.status || '进行中';
+    const assign = req.body.assign || 'all'; // 'all' | group name
+    const id = db.insert('INSERT INTO homework (title,due_date,description,status) VALUES (?,?,?,?)', [title, due_date, description, status]);
+    let students;
+    if (assign === 'all') students = db.all('SELECT id FROM students');
+    else students = db.all('SELECT id FROM students WHERE group_name=?', [assign]);
+    for (const s of students) db.insert('INSERT INTO homework_students (homework_id,student_id,submitted) VALUES (?,?,0)', [id, s.id]);
+    res.json(db.get('SELECT * FROM homework WHERE id=?', [id]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/homework/:id', async (req, res) => {
+  try {
+    const keys = ['title', 'due_date', 'description', 'status'].filter(k => req.body[k] !== undefined);
+    if (keys.length === 0) return res.json({ ok: true });
+    const sets = keys.map(k => k + '=?').join(',');
+    db.run('UPDATE homework SET ' + sets + ' WHERE id=?', [...keys.map(k => req.body[k]), req.params.id]);
+    res.json(db.get('SELECT * FROM homework WHERE id=?', [req.params.id]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/homework/:id', async (req, res) => {
+  try { db.run('DELETE FROM homework_students WHERE homework_id=?', [req.params.id]); db.run('DELETE FROM homework WHERE id=?', [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+// assignment submissions: who got it, who submitted, list of names not submitted
+app.get('/api/homework/:id/submissions', async (req, res) => {
+  try {
+    const hid = +req.params.id;
+    const total = db.get('SELECT COUNT(*) AS c FROM students').c;
+    const assigned = db.all('SELECT hs.id, hs.student_id, hs.submitted, s.name FROM homework_students hs JOIN students s ON s.id=hs.student_id WHERE hs.homework_id=?', [hid]);
+    const submitted = assigned.filter(a => a.submitted).map(a => a.name);
+    const notSubmitted = assigned.filter(a => !a.submitted).map(a => a.name);
+    res.json({ total, assignedCount: assigned.length, submittedCount: submitted.length, notSubmittedCount: notSubmitted.length, submitted, notSubmitted, rows: assigned });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/homework_students/:id', async (req, res) => {
+  try {
+    const sub = req.body.submitted !== undefined ? (req.body.submitted ? 1 : 0) : 0;
+    db.run('UPDATE homework_students SET submitted=? WHERE id=?', [sub, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// scores: custom CRUD (needs note column + /:id GET)
+app.get('/api/scores', async (req, res) => {
+  try { res.json(db.all('SELECT * FROM scores ORDER BY id DESC')); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/scores/:id', async (req, res) => {
+  try { res.json(db.get('SELECT * FROM scores WHERE id=?', [+req.params.id])); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/scores', async (req, res) => {
+  try {
+    const cols = COLS.scores.filter(c => req.body[c] !== undefined);
+    const qs = cols.map(() => '?').join(',');
+    const id = db.insert('INSERT INTO scores (' + cols.join(',') + ') VALUES (' + qs + ')', cols.map(k => req.body[k]));
+    res.json(db.get('SELECT * FROM scores WHERE id=?', [id]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.patch('/api/scores/:id', async (req, res) => {
+  try {
+    const keys = COLS.scores.filter(c => req.body[c] !== undefined);
+    if (keys.length === 0) return res.json({ ok: true });
+    const sets = keys.map(k => k + '=?').join(',');
+    db.run('UPDATE scores SET ' + sets + ' WHERE id=?', [...keys.map(k => req.body[k]), req.params.id]);
+    res.json(db.get('SELECT * FROM scores WHERE id=?', [req.params.id]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/api/scores/:id', async (req, res) => {
+  try { db.run('DELETE FROM scores WHERE id=?', [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // settings (term_start for timetable week calculation)
 app.get('/api/settings', async (req, res) => {
@@ -119,6 +212,53 @@ app.get('/api/settings', async (req, res) => {
 app.post('/api/settings', async (req, res) => {
   try { db.run("UPDATE settings SET value=? WHERE key='term_start'", [req.body.term_start || '']); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// profile (shared teacher name / class / avatar — synced across devices)
+app.get('/api/profile', async (req, res) => {
+  try {
+    let row = db.get('SELECT * FROM profile ORDER BY id DESC LIMIT 1');
+    if (!row) row = { teacher: '林老师', class: '三(2)班 · 语文', avatar_path: null, avatar_data: null };
+    res.json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/profile', async (req, res) => {
+  try {
+    const existing = db.get('SELECT * FROM profile ORDER BY id DESC LIMIT 1');
+    const teacher = req.body.teacher !== undefined ? req.body.teacher : (existing ? existing.teacher : '林老师');
+    const cls = req.body.class !== undefined ? req.body.class : (existing ? existing.class : '三(2)班 · 语文');
+    const avatar_path = req.body.avatar_path !== undefined ? req.body.avatar_path : (existing ? existing.avatar_path : null);
+    const avatar_data = req.body.avatar_data !== undefined ? req.body.avatar_data : (existing ? existing.avatar_data : null);
+    if (existing) {
+      db.run('UPDATE profile SET teacher=?, class=?, avatar_path=?, avatar_data=? WHERE id=?',
+        [teacher, cls, avatar_path, avatar_data, existing.id]);
+    } else {
+      db.insert('INSERT INTO profile (teacher,class,avatar_path,avatar_data) VALUES (?,?,?,?)',
+        [teacher, cls, avatar_path, avatar_data]);
+    }
+    res.json(db.get('SELECT * FROM profile ORDER BY id DESC LIMIT 1'));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// avatar upload (multipart) — saved to public/uploads + base64 backup in DB
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+app.post('/api/profile/avatar', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'no file' });
+    const ext = (req.file.originalname.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const fname = 'avatar.' + (ext || 'png');
+    fs.writeFileSync(path.join(UPLOAD_DIR, fname), req.file.buffer);
+    const dataUrl = 'data:' + (req.file.mimetype || 'image/png') + ';base64,' + req.file.buffer.toString('base64');
+    const existing = db.get('SELECT * FROM profile ORDER BY id DESC LIMIT 1');
+    if (existing) {
+      db.run('UPDATE profile SET avatar_path=?, avatar_data=? WHERE id=?', ['/uploads/' + fname, dataUrl, existing.id]);
+    } else {
+      db.insert('INSERT INTO profile (teacher,class,avatar_path,avatar_data) VALUES (?,?,?,?)',
+        ['林老师', '三(2)班 · 语文', '/uploads/' + fname, dataUrl]);
+    }
+    res.json({ path: '/uploads/' + fname, data: dataUrl });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // student detail: scores + communications + class homework (for student profile view)

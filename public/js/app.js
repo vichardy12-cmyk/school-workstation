@@ -6,9 +6,18 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;'
 async function getJSON(url){ const r = await fetch(url); return r.json(); }
 async function api(method, url, body){
   const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: body?JSON.stringify(body):undefined});
-  return r.json();
+  let data;
+  try { data = await r.json(); } catch(e){ data = {}; }
+  if(!r.ok){ alert('保存失败：'+(data.error||('HTTP '+r.status))); throw new Error(data.error||('HTTP '+r.status)); }
+  return data;
 }
 function tag(text, cls){ return '<span class="tag '+(cls||'')+'">'+esc(text)+'</span>'; }
+function toast(msg){
+  let t=$('#toast');
+  if(!t){ t=document.createElement('div'); t.id='toast'; document.body.appendChild(t); }
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._tm); t._tm=setTimeout(()=>t.classList.remove('show'), 1800);
+}
 function statusTag(s){
   if(s==='已完成'||s==='优秀') return tag(s,'blue');
   if(s==='进行中'||s==='高') return tag(s);
@@ -23,11 +32,15 @@ function hideModal(){ $('#modalMask').hidden = true; }
 $('#modalMask').addEventListener('click', e=>{
   if(e.target.id === 'modalMask'){ if(modalCloseCb){ const cb = modalCloseCb; modalCloseCb = null; cb(); } else hideModal(); }
 });
-function confirmDialog(msg){
+function confirmDialog(msg, opts){
+  const o = opts || {};
+  const title = o.title || '⚠️ 确认删除';
+  const yesText = o.yes || '确定删除';
+  const yesStyle = o.danger ? 'background:#A32D2D' : '';
   return new Promise(res=>{
-    $('#modal').innerHTML = `<div class="modal-title">⚠️ 确认删除</div>
+    $('#modal').innerHTML = `<div class="modal-title">${esc(title)}</div>
       <p style="margin:6px 0 18px;color:var(--text)">${esc(msg)}</p>
-      <div class="btn-row"><button class="btn ghost" id="cfNo">取消</button><button class="btn" id="cfYes" style="background:#A32D2D">确定删除</button></div>`;
+      <div class="btn-row"><button class="btn ghost" id="cfNo">取消</button><button class="btn" id="cfYes" style="${yesStyle}">${esc(yesText)}</button></div>`;
     $('#modalMask').hidden = false;
     const done = v => { modalCloseCb = null; $('#modalMask').hidden = true; res(v); };
     modalCloseCb = () => done(false);
@@ -36,24 +49,34 @@ function confirmDialog(msg){
   });
 }
 
-// ---------- Profile (editable name / class / avatar) ----------
+// ---------- Profile (synced to server: name / class / avatar) ----------
+let _profile = null; // cache from server
 function applyProfile(){
-  const av = localStorage.getItem('sw_avatar');
-  const nm = localStorage.getItem('sw_teacher') || '林老师';
-  const cls = localStorage.getItem('sw_class') || '三(2)班 · 语文';
+  const p = _profile || {};
+  const av = p.avatar_path || p.avatar_data || localStorage.getItem('sw_avatar');
+  const nm = p.teacher || localStorage.getItem('sw_teacher') || '林老师';
+  const cls = p.class || localStorage.getItem('sw_class') || '三(2)班 · 语文';
   if(av) { $('#avatar').style.backgroundImage = 'url('+av+')'; $('#avatar').textContent=''; }
   else { $('#avatar').style.backgroundImage=''; $('#avatar').textContent = nm[0]; }
   $('#teacherName').textContent = nm;
   if($('#teacherClass')) $('#teacherClass').textContent = cls;
   const hn = $('#heroName'); if(hn) hn.textContent = nm;
 }
+async function loadProfile(){
+  try {
+    const p = await getJSON('/api/profile');
+    _profile = p || {};
+  } catch(e){ _profile = {}; }
+  applyProfile();
+}
 function openProfileModal(){
   const c=getCreds();
+  const p = _profile || {};
   openModal(`<button class="close-x" id="pClose">×</button>
     <div class="modal-title">👤 我的资料与账号</div>
-    <div class="m-field"><label>姓名</label><input id="pName" value="${esc(localStorage.getItem('sw_teacher')||'林老师')}"></div>
-    <div class="m-field"><label>班级 / 科目</label><input id="pClass" value="${esc(localStorage.getItem('sw_class')||'三(2)班 · 语文')}"></div>
-    <div class="m-field"><label>头像</label><button class="btn ghost sm" id="pAvatar">更换头像</button></div>
+    <div class="m-field"><label>姓名</label><input id="pName" value="${esc(p.teacher || localStorage.getItem('sw_teacher')||'林老师')}"></div>
+    <div class="m-field"><label>班级 / 科目</label><input id="pClass" value="${esc(p.class || localStorage.getItem('sw_class')||'三(2)班 · 语文')}"></div>
+    <div class="m-field"><label>头像</label><input type="file" id="pAvatar" accept="image/*"></div>
     <div class="btn-row"><button class="btn ghost" id="pCancel">取消</button><button class="btn" id="pSave">保存</button></div>
     <div class="m-divider"></div>
     <div class="m-section-title">🔐 账号安全</div>
@@ -68,16 +91,26 @@ function openProfileModal(){
     <div class="btn-row" style="margin-top:4px"><button class="btn ghost" id="pLogout" style="color:#A32D2D">退出登录</button></div>`);
   $('#pClose').onclick = hideModal; $('#pCancel').onclick = hideModal;
   $('#pLogout').onclick = ()=>{ localStorage.removeItem('sw_auth'); sessionStorage.removeItem('sw_auth'); location.reload(); };
-  $('#pAvatar').onclick = ()=>{
-    const inp = document.createElement('input'); inp.type='file'; inp.accept='image/*';
-    inp.onchange = ()=>{ const f=inp.files[0]; if(!f) return; const rd=new FileReader();
-      rd.onload = ()=>{ localStorage.setItem('sw_avatar', rd.result); applyProfile(); }; rd.readAsDataURL(f); };
-    inp.click();
+  $('#pAvatar').onchange = async ()=>{
+    const f = $('#pAvatar').files[0]; if(!f) return;
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const r = await fetch('/api/profile/avatar', { method:'POST', body: fd });
+      if(!r.ok) throw new Error('upload failed');
+      const j = await r.json();
+      _profile = _profile || {}; _profile.avatar_path = j.path; _profile.avatar_data = j.data;
+      applyProfile(); toast('头像已更新');
+    } catch(e){ alert('头像上传失败，请重试。'); }
   };
-  $('#pSave').onclick = ()=>{
-    localStorage.setItem('sw_teacher', $('#pName').value.trim() || '林老师');
-    localStorage.setItem('sw_class', $('#pClass').value.trim() || '三(2)班 · 语文');
-    applyProfile(); hideModal();
+  $('#pSave').onclick = async ()=>{
+    const nm = $('#pName').value.trim() || '林老师';
+    const cls = $('#pClass').value.trim() || '三(2)班 · 语文';
+    try {
+      const j = await api('POST', '/api/profile', { teacher: nm, class: cls });
+      _profile = j || _profile;
+      localStorage.setItem('sw_teacher', nm); localStorage.setItem('sw_class', cls);
+      applyProfile(); hideModal(); toast('资料已保存（所有设备同步）');
+    } catch(e){ alert('保存失败，请重试。'); }
   };
   $('#pSaveUser').onclick = ()=>{
     if($('#pCurPassForUser').value !== c.pass){ alert('当前密码错误，无法修改用户名。'); return; }
@@ -93,7 +126,7 @@ function openProfileModal(){
     localStorage.setItem('sw_pass', np); alert('密码已更新。'); hideModal();
   };
 }
-function initProfile(){ applyProfile(); $('#profile').addEventListener('click', openProfileModal); }
+function initProfile(){ loadProfile(); $('#profile').addEventListener('click', openProfileModal); }
 
 // ---------- Top date ----------
 function initTopDate(){
@@ -118,6 +151,23 @@ document.querySelectorAll('.nav-item').forEach(n=> n.addEventListener('click', (
 window.addEventListener('hashchange', ()=> navigate(location.hash.slice(2)||'dashboard'));
 function start(){ navigate(location.hash.slice(2)||'dashboard'); }
 
+// ---------- Floating musik global — tampil di semua modul (tanaman hanya di dashboard) ----------
+function mountFloating(){
+  // hindari dobel mount
+  if(document.getElementById('musicFloat')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'globalFloat';
+  wrap.innerHTML = `
+    <div class="music-float collapsed" id="musicFloat">
+      <button class="plant-music" id="plantMusic" title="播放 / 暂停 背景音乐">🎵</button>
+      <span class="pv-ico">🔊</span>
+      <input type="range" id="plantVol" min="0" max="100" value="70" aria-label="音量">
+    </div>
+    <audio id="bgAudio" src="backsound.mp3" loop preload="none"></audio>`;
+  document.body.appendChild(wrap);
+  initMusic();
+}
+
 // ---------- Dashboard ----------
 const QUOTES = [
   '教育是一棵树摇动另一棵树，一朵云推动另一朵云。',
@@ -139,7 +189,12 @@ function renderDashboard(){
       <p>今天也是用心陪伴孩子们的一天 · ${esc(cls)}</p>
     </div>
     <div class="widget-grid">
-      <div class="widget"><h3>🕒 时钟</h3><div class="clock" id="clk">--:--:--</div><div class="clock-date" id="clkDate"></div></div>
+      <div class="widget clock-weather"><h3>🕒 时钟 · 当地天气</h3>
+        <div class="clock" id="clk">--:--:--</div>
+        <div class="clock-date" id="clkDate"></div>
+        <div class="cw-divider"></div>
+        <div class="weather" id="weatherWidget"><div id="weatherBody"><div class="w-temp">--°</div><div class="w-desc">定位中…</div></div></div>
+      </div>
       <div class="widget"><h3>📅 日历</h3>
         <div class="cal-nav"><button id="calPrev">‹</button><span class="cal-title" id="calTitle"></span><button id="calNext">›</button></div>
         <div class="cal-grid" id="cal"></div></div>
@@ -148,6 +203,16 @@ function renderDashboard(){
       <div class="widget blackboard"><h3>📌 小黑板</h3>
         <textarea id="bb" placeholder="随手记点什么…">${esc(localStorage.getItem('sw_notes')||'')}</textarea>
         <div class="bb-hint">📝 自动保存到本机</div></div>
+    </div>
+    <button class="fab-spin" id="spinnerFab" title="随机抽一位同学">🎯</button>
+    <div class="plant-float collapsed" id="plantFloat">
+      <div class="plant-collapsed-logo">💧</div>
+      <div class="plant-stage" id="plantStage">🌰</div>
+      <div class="plant-hint" id="plantHint">浇水长大～</div>
+      <button class="plant-reset" id="plantReset" title="收割并重栽">🌳</button>
+      <div class="plant-ctrl-row">
+        <button class="btn sm plant-water-btn" id="plantWater" title="浇水">💧</button>
+      </div>
     </div>
     <div class="section"><div class="widget"><h3>📚 本周课程表</h3><div class="tt-grid" id="tt"></div></div></div>
     <div class="widget-grid section">
@@ -170,6 +235,109 @@ function renderDashboard(){
     </div>`;
   startClock();
   loadDashboardData();
+  loadWeather();
+  initSpinner();
+  initPlant();
+}
+async function loadWeather(){
+  const body = $('#weatherBody'); if(!body) return;
+  const FALLBACK_CITY = '杭州'; // 默认城市，定位被拒时使用
+  const wdesc = c => ({0:'晴',1:'为主晴',2:'多云',3:'阴',45:'雾',48:'雾凇',51:'毛毛雨',53:'小雨',55:'中雨',61:'小雨',63:'中雨',65:'大雨',71:'小雪',73:'中雪',75:'大雪',80:'阵雨',81:'阵雨',82:'强阵雨',95:'雷阵雨'})[c]||'未知';
+  const render = (temp, code, city) => { body.innerHTML = '<div class="w-temp">'+Math.round(temp)+'°</div><div class="w-desc">'+wdesc(code)+' · '+esc(city)+'</div>'; };
+  try {
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(async pos=>{
+        try{
+          const {latitude:lat, longitude:lon}=pos.coords;
+          const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code`);
+          const j = await r.json();
+          render(j.current.temperature_2m, j.current.weather_code, '当前位置');
+        }catch(e){ renderFallback(); }
+      }, ()=> renderFallback(), {timeout:8000});
+    } else renderFallback();
+  } catch(e){ renderFallback(); }
+  async function renderFallback(){
+    try{
+      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=30.27&longitude=120.15&current=temperature_2m,weather_code`);
+      const j = await r.json(); render(j.current.temperature_2m, j.current.weather_code, FALLBACK_CITY);
+    }catch(e){ body.innerHTML='<div class="w-temp">--°</div><div class="w-desc">天气获取失败</div>'; }
+  }
+}
+const PLANT_STAGES = ['🌰','🌰','🌱','🌱','🌿','🌿','🌷','🌷','🌳'];
+function initPlant(){
+  const stage = $('#plantStage'), hint=$('#plantHint'), box=$('#plantFloat'); if(!stage||!box) return;
+  const MAX = PLANT_STAGES.length-1;
+  let lvl = +(localStorage.getItem('sw_plant')||0);
+  const draw = ()=>{ stage.textContent = PLANT_STAGES[Math.min(lvl, MAX)]; hint.textContent = lvl>=MAX? '已长成！🌳 点 🌳 收割重栽' : 'Lv.'+lvl+'/'+MAX+' 浇水长大～'; };
+  draw();
+  // klik container: toggle expand/collapse (kecuali tombol di dalam)
+  box.onclick = (e)=>{ if(e.target.closest('#plantWater')||e.target.closest('#plantReset')) return; box.classList.toggle('collapsed'); };
+  // klik di luar floating tanaman -> otomatis minimize
+  setTimeout(()=>{
+    document.addEventListener('click', (e)=>{
+      const pf=$('#plantFloat');
+      if(pf && !pf.contains(e.target) && !e.target.closest('#plantWater') && !e.target.closest('#plantReset')) pf.classList.add('collapsed');
+    }, true);
+  }, 0);
+  $('#plantWater').onclick = (e)=>{ e.stopPropagation(); if(lvl<MAX){ lvl++; localStorage.setItem('sw_plant', lvl); stage.style.transform='scale(1.15)'; setTimeout(()=>stage.style.transform='',150); draw(); } };
+  $('#plantReset').onclick = (e)=>{ e.stopPropagation(); lvl=0; localStorage.setItem('sw_plant', lvl); draw(); toast('已收割，重新播种 🌰'); };
+}
+// backsound global — dipanggil sekali saat boot (markup ada di #globalFloat)
+function initMusic(){
+  const mbox = $('#musicFloat'); if(!mbox) return;
+  // klik container: buka/tutup slider volume (kecuali tombol di dalam)
+  mbox.onclick = (e)=>{ if(e.target.closest('#plantMusic')||e.target.closest('#plantVol')) return; mbox.classList.toggle('collapsed'); };
+  // klik di luar floating musik -> otomatis minimize
+  setTimeout(()=>{
+    document.addEventListener('click', (e)=>{
+      const mf=$('#musicFloat');
+      if(mf && !mf.contains(e.target) && !e.target.closest('#plantMusic') && !e.target.closest('#plantVol')) mf.classList.add('collapsed');
+    }, true);
+  }, 0);
+  const music = $('#plantMusic'), audio = $('#bgAudio'), vol = $('#plantVol'), volIco = document.querySelector('.pv-ico');
+  if(music && audio){
+    let lastVol = 0.7; // remember volume before mute
+    audio.volume = +vol.value/100;
+    vol.oninput = ()=>{
+      const v = +vol.value/100;
+      audio.volume = v;
+      if(volIco) volIco.textContent = v===0 ? '🔇' : (v<0.5 ? '🔉' : '🔊');
+      if(v===0){ // volume mati -> pause
+        if(!audio.paused){ audio.pause(); music.classList.remove('playing'); }
+      } else {
+        lastVol = v;
+        if(audio.paused && music.dataset.wasPlaying==='1'){ audio.play().then(()=> music.classList.add('playing')).catch(()=>{}); }
+      }
+    };
+    music.onclick = (e)=>{ e.stopPropagation();
+      mbox.classList.remove('collapsed'); // tap -> tampilkan slider volume
+      if(audio.paused){
+        audio.volume = +vol.value/100 || lastVol;
+        music.dataset.wasPlaying='1';
+        audio.play().then(()=> music.classList.add('playing')).catch(()=> toast('无法播放音频'));
+      } else { audio.pause(); music.classList.remove('playing'); music.dataset.wasPlaying='0'; }
+    };
+    audio.onended = ()=> music.classList.remove('playing');
+  }
+}
+async function initSpinner(){
+  const fab = $('#spinnerFab'); if(!fab) return;
+  fab.onclick = async ()=>{
+    let students=[]; try{ students = await getJSON('/api/students'); }catch(e){}
+    if(!students.length){ alert('还没有学生数据'); return; }
+    openModal(`<div class="modal-title" style="text-align:center">🎯 随机抽一位同学</div>
+      <div class="spin-reel" id="spinReel">${esc(students[0].name)}</div>
+      <div style="text-align:center;color:var(--muted);margin-top:4px" id="spinGroup">滚动中…</div>
+      <div class="btn-row" style="justify-content:center"><button class="btn ghost" id="spAgain">再抽一次</button><button class="btn" id="spClose">停止</button></div>`);
+    const reel = $('#spinReel'), grp=$('#spinGroup');
+    let stopped=false, iv=null;
+    const spin = ()=>{ if(!stopped) reel.textContent = esc(students[Math.floor(Math.random()*students.length)].name); };
+    const start = ()=>{ stopped=false; reel.classList.remove('settled'); grp.textContent='滚动中…'; clearInterval(iv); iv=setInterval(spin,80); };
+    const stop = ()=>{ stopped=true; clearInterval(iv); reel.classList.add('settled'); const cur=students.find(s=>s.name===reel.textContent)||students[0]; grp.textContent=esc(cur.group_name||''); };
+    $('#spClose').onclick = ()=>{ if(!stopped){ stop(); } else { hideModal(); } };
+    $('#spAgain').onclick = ()=> start();
+    start();
+  };
 }
 function navLabel(r){ return {students:'学生管理',lessons:'教案管理',homework:'作业管理',scores:'成绩管理',communications:'家校沟通',notices:'通知公告',todos:'待办事项',timetable:'课程表',resources:'教学资料',events:'日程安排'}[r]||r; }
 
@@ -255,13 +423,18 @@ const CFG = {
 };
 async function renderGeneric(route){
   const cfg = CFG[route]; const table = cfg.table;
+  const isHw = (table==='homework');
   let rows = await getJSON('/api/'+table);
+  let groups = [];
+  if(isHw){ try { groups = [...new Set((await getJSON('/api/students')).map(s=>s.group_name))].sort(); } catch(e){} }
+  const assignHTML = isHw ? `<div><label style="display:block;font-size:12px;color:var(--muted)">发给谁</label><select id="f_assign"><option value="all">全班（全部学生）</option>${groups.map(g=>'<option value="'+esc(g)+'">'+esc(g)+'</option>').join('')}</select></div>` : '';
   content.innerHTML = `<div class="page-title">${cfg.title}</div>
     <div class="card">
       <div style="font-weight:600;margin-bottom:6px">添加新条目</div>
-      <div class="form-row" id="addForm">${cfg.fields.map(f=>fieldHTML(f)).join('')}
+      <div class="form-row" id="addForm">${cfg.fields.map(f=>fieldHTML(f)).join('')}${assignHTML}
         <button class="btn" id="addBtn">添加</button>
       </div>
+      ${isHw?'<div style="font-size:12px;color:var(--muted);margin-top:4px">💡 点击作业「标题」可查看收发情况（谁已交/未交，可勾选已交）。</div>':''}
     </div>
     <div class="section"><table><thead><tr>${cfg.cols.map(c=>'<th>'+c[1]+'</th>').join('')}<th></th></tr></thead>
       <tbody id="tbody"></tbody></table></div>`;
@@ -272,23 +445,72 @@ async function renderGeneric(route){
         let v = r[c[0]];
         if(c[2]===true && (c[0]==='status'||c[0]==='priority')) return '<td>'+statusTag(v)+'</td>';
         if(c[0]==='pinned') return '<td>'+(v? '📌 置顶':'—')+'</td>';
+        if(isHw && c[0]==='title') return '<td><span class="name-link" data-hw="'+r.id+'">'+esc(v)+'</span></td>';
         return '<td>'+esc(v)+'</td>';
       }).join('');
-      return '<tr>'+cells+'<td><button class="del" data-del="'+r.id+'">删除</button></td></tr>';
+      return '<tr>'+cells+'<td><button class="edit" data-edit="'+r.id+'">修改</button> <button class="del" data-del="'+r.id+'">删除</button></td></tr>';
     }).join('');
     tbody.querySelectorAll('[data-del]').forEach(b=> b.onclick=async()=>{
       if(await confirmDialog('确定删除这条记录吗？此操作不可恢复。')){
         await api('DELETE','/api/'+table+'/'+b.dataset.del); rows = rows.filter(r=>r.id!=b.dataset.del); draw();
       }
     });
+    tbody.querySelectorAll('[data-edit]').forEach(b=> b.onclick=()=>{ const r=rows.find(x=>x.id==b.dataset.edit); openEditGeneric(cfg, r); });
+    if(isHw) tbody.querySelectorAll('[data-hw]').forEach(b=> b.onclick=()=> openHomeworkSubmissions(+b.dataset.hw));
   }
   draw();
   $('#addBtn').onclick = async ()=>{
     const body={}; cfg.fields.forEach(f=>{ const el=document.getElementById('f_'+f[0]); body[f[0]]=el.value; });
+    if(isHw){ const a=document.getElementById('f_assign'); if(a) body.assign=a.value; }
     const created = await api('POST','/api/'+table, body);
     rows.unshift(created); draw();
     cfg.fields.forEach(f=>{ document.getElementById('f_'+f[0]).value=''; });
   };
+}
+function openEditGeneric(cfg, row){
+  const fields = cfg.fields.map(f=>{
+    let val = row[f[0]]!==undefined && row[f[0]]!==null ? row[f[0]] : '';
+    if(f[2] && f[2].startsWith('select:')){
+      const opts = f[2].split(':')[1].split(',').map(o=>'<option value="'+o+'"'+(o==val?' selected':'')+'>'+o+'</option>').join('');
+      return '<div class="m-field"><label>'+f[1]+'</label><select id="e_'+f[0]+'">'+opts+'</select></div>';
+    }
+    return '<div class="m-field"><label>'+f[1]+'</label><input id="e_'+f[0]+'" type="'+(f[2]||'text')+'" value="'+esc(val)+'"></div>';
+  }).join('');
+  openModal(`<button class="close-x" id="eClose">×</button><div class="modal-title">✏️ 修改「${esc(cfg.title)}」</div>${fields}
+    <div class="btn-row"><button class="btn ghost" id="eCancel">取消</button><button class="btn" id="eSave">保存</button></div>`);
+  $('#eClose').onclick=hideModal; $('#eCancel').onclick=hideModal;
+  $('#eSave').onclick = async ()=>{
+    const body={}; cfg.fields.forEach(f=>{ const el=document.getElementById('e_'+f[0]); body[f[0]]=el.value; });
+    await api('PATCH','/api/'+cfg.table+'/'+row.id, body);
+    hideModal(); toast('已保存修改'); renderGeneric(cfg.table);
+  };
+}
+async function openHomeworkSubmissions(hid){
+  openModal(`<button class="close-x" id="hsClose">×</button><div class="modal-title">📝 作业收发情况</div>
+    <div id="hsBody" style="font-size:14px">加载中…</div>
+    <div class="btn-row"><button class="btn ghost" id="hsClose2">关闭</button></div>`);
+  $('#hsClose').onclick=hideModal; $('#hsClose2').onclick=hideModal;
+  const d = await getJSON('/api/homework/'+hid+'/submissions');
+  let html = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <div class="hs-stat">班级总人数<b>${d.total}</b></div>
+    <div class="hs-stat">应完成<b>${d.assignedCount}</b></div>
+    <div class="hs-stat done">已交<b>${d.submittedCount}</b></div>
+    <div class="hs-stat warn">未交<b>${d.notSubmittedCount}</b></div>
+  </div>`;
+  html += '<div style="font-weight:600;margin:8px 0 4px;color:var(--A32D2D,#A32D2D)">未交名单（'+d.notSubmittedCount+' 人）</div>';
+  html += d.notSubmitted.length? '<div class="hs-names">'+d.notSubmitted.map(n=>'<span class="hs-chip">'+esc(n)+'</span>').join('')+'</div>' : '<div class="m-empty">🎉 全部交齐！</div>';
+  html += '<div style="font-weight:600;margin:12px 0 4px;color:var(--green-800)">已交名单（点击可取消勾选）</div><div id="hsList">';
+  html += d.rows.map(r=>'<label class="hs-row"><input type="checkbox" data-hs="'+r.id+'" '+(r.submitted?'checked':'')+'> <span>'+esc(r.name)+'</span></label>').join('');
+  html += '</div>';
+  $('#hsBody').innerHTML = html;
+  $('#hsBody').querySelectorAll('[data-hs]').forEach(cb=> cb.onchange=async()=>{
+    await api('PATCH','/api/homework_students/'+cb.dataset.hs, { submitted: cb.checked });
+    const nd = await getJSON('/api/homework/'+hid+'/submissions');
+    // refresh counts only
+    const stats = $('#hsBody').querySelectorAll('.hs-stat b');
+    if(stats.length>=4){ stats[2].textContent=nd.submittedCount; stats[3].textContent=nd.notSubmittedCount; }
+    toast(cb.checked?'已标记交':'已取消');
+  });
 }
 function fieldHTML(f){
   const [key,label,type]=f;
@@ -444,6 +666,8 @@ async function renderScores(){
       bindAddStu(); return;
     }
     const examOpts = exams.map(e=>'<option value="'+esc(e.name)+'" '+(e.name===cur?'selected':'')+'>'+esc(e.name)+'</option>').join('');
+    const curExam = exams.find(e=>e.name===cur) || {};
+    const examDate = curExam.date || '';
     const gf = curGrp;
     const filtered = gf==='all' ? list : list.filter(r=> (gmap[r.student_id]||'')===gf);
     const nums = filtered.map(r=>+r.score).filter(v=>!isNaN(v));
@@ -458,7 +682,7 @@ async function renderScores(){
       if(sortKey==='score') return (((+a.score)||-1)-((+b.score)||-1))*dir;
       return 0;
     });
-    $('#examTable').innerHTML=`<div style="font-weight:600;margin-bottom:6px">${esc(cur)} · 共 ${filtered.length} 人 · 已录 ${nums.length} 人 · 平均分 ${avg} · 最高 ${hi} · 最低 ${lo}</div>
+    $('#examTable').innerHTML=`<div style="font-weight:600;margin-bottom:6px">${esc(cur)} · ${examDate?('📅 '+esc(examDate)+' · '):''}共 ${filtered.length} 人 · 已录 ${nums.length} 人 · 平均分 ${avg} · 最高 ${hi} · 最低 ${lo}</div>
       <div class="form-row" style="margin-bottom:8px">
         <div><label style="display:block;font-size:12px;color:var(--muted)">按考试筛选</label><select id="examFilter">${examOpts}</select></div>
         <div><label style="display:block;font-size:12px;color:var(--muted)">按小组筛选</label><select id="grpFilter">${'<option value="all">全部小组</option>'+groups.map(g=>'<option value="'+esc(g)+'" '+(g===gf?'selected':'')+'>'+esc(g)+'</option>').join('')}</select></div>
@@ -468,16 +692,16 @@ async function renderScores(){
         <th class="sortable" data-sort="name">学生${arrow('name')}</th>
         <th class="sortable" data-sort="seat_no">座号${arrow('seat_no')}</th>
         <th class="sortable" data-sort="score">分数${arrow('score')}</th>
-        <th>科目</th><th>日期</th><th>操作</th>
+        <th>科目</th><th>备注</th><th>操作</th>
       </tr></thead><tbody id="sbody"></tbody></table>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px">✏️ 点击表头「学生 / 座号 / 分数」可升序 ▲ / 降序 ▼ 切换排序；点每行「修改」可录入或调整分数。</div>`;
+      <div style="font-size:12px;color:var(--muted);margin-top:6px">✏️ 点击表头「学生 / 座号 / 分数」可升序 ▲ / 降序 ▼ 切换排序；点每行「修改」可录入或调整分数与备注。</div>`;
     const tb=$('#sbody');
     tb.innerHTML=sorted.map(r=>`<tr>
       <td>${esc(smap[r.student_id]||'-')}</td>
       <td>${seatmap[r.student_id]==null?'—':esc(seatmap[r.student_id])}</td>
       <td>${r.score==null?'—':esc(r.score)}</td>
       <td>${esc(r.subject||'语文')}</td>
-      <td>${esc(r.date)}</td>
+      <td>${esc(r.note||'—')}</td>
       <td><button class="btn ghost sm" data-edit="${r.id}">修改</button> <button class="del sm" data-del="${r.id}">删除</button></td></tr>`).join('');
     tb.querySelectorAll('[data-edit]').forEach(b=> b.onclick=()=> editScore(+b.dataset.edit));
     tb.querySelectorAll('[data-del]').forEach(b=> b.onclick=async()=>{
@@ -531,16 +755,35 @@ async function renderScores(){
       <div class="m-field"><label>学生</label><select id="s_student_id">${students.map(x=>'<option value="'+x.id+'" '+(x.id==s.student_id?'selected':'')+'>'+esc(x.name)+'</option>').join('')}</select></div>
       <div class="m-field"><label>考试</label><select id="s_exam_name">${exams.map(e=>'<option value="'+esc(e.name)+'" '+(e.name==s.exam_name?'selected':'')+'>'+esc(e.name)+'</option>').join('')}</select></div>
       <div class="m-field"><label>科目</label><input id="s_subject" value="${esc(s.subject)}"></div>
-      <div class="m-field"><label>分数</label><input id="s_score" type="number" value="${esc(s.score)}"></div>
+      <div class="m-field"><label>分数</label><input id="s_score" type="number" step="0.1" value="${s.score==null?'':esc(s.score)}" placeholder="留空表示未录入"></div>
       <div class="m-field"><label>日期</label><input id="s_date" type="date" value="${esc(s.date)}"></div>
+      <div class="m-field"><label>备注</label><input id="s_note" type="text" value="${esc(s.note||'')}" placeholder="如：作文扣分较多 / 进步明显"></div>
       <div class="btn-row"><button class="btn ghost" id="sCancel">取消</button><button class="btn" id="sSave">保存</button></div>`);
     $('#sClose').onclick=hideModal; $('#sCancel').onclick=hideModal;
     $('#sSave').onclick=async()=>{
-      if(!(await confirmDialog('确定保存本次成绩修改？'))) return;
-      const body={student_id:+$('#s_student_id').value, exam_name:$('#s_exam_name').value, subject:$('#s_subject').value, score:+$('#s_score').value, date:$('#s_date').value};
+      // baca nilai SEBELUM modal konfirmasi menimpa form
+      const sv = $('#s_score').value.trim();
+      const body={
+        student_id:+$('#s_student_id').value,
+        exam_name:$('#s_exam_name').value,
+        subject:$('#s_subject').value,
+        score: sv==='' ? null : (+sv),
+        date:$('#s_date').value,
+        note:$('#s_note').value.trim()
+      };
+      if(!(await confirmDialog('确定保存本次成绩修改？', {title:'确认保存', yes:'确认保存'}))) return;
       const upd=await api('PATCH','/api/scores/'+id, body);
-      const i=scores.findIndex(x=>x.id==id); if(i>-1) scores[i]=Object.assign(scores[i],upd);
-      drawExam(); hideModal();
+      // reload from server to guarantee display matches persisted data
+      scores = await getJSON('/api/scores');
+      const saved = scores.find(x=>x.id==id);
+      const savedNote = saved && (saved.note!==undefined ? saved.note : null);
+      if(body.note && savedNote!==body.note){
+        toast('⚠️ 服务器未保存备注，请重启 server 后再试');
+      } else {
+        toast('已保存：分数 '+(body.score==null?'—':body.score)+' · 备注 '+(body.note||'—'));
+      }
+      drawExam();
+      hideModal();
     };
   }
   function openExamModal(isEdit){
@@ -631,11 +874,12 @@ async function renderStudentPage(route){
   const tbody=$('#tbody');
   function draw(){ tbody.innerHTML = rows.map(r=>{
     const cells = cfg.cols.map(c=> c[0]==='student'? '<td><span class="name-link" data-std="'+(r.student_id||'')+'">'+esc(smap[r.student_id]||'-')+'</span></td>' : '<td>'+esc(r[c[0]])+'</td>').join('');
-    return '<tr>'+cells+'<td><button class="del" data-del="'+r.id+'">删除</button></td></tr>';
+    return '<tr>'+cells+'<td><button class="edit" data-edit="'+r.id+'">修改</button> <button class="del" data-del="'+r.id+'">删除</button></td></tr>';
   }).join('');
     tbody.querySelectorAll('[data-del]').forEach(b=> b.onclick=async()=>{
       if(await confirmDialog('确定删除这条沟通记录？')){ await api('DELETE','/api/'+table+'/'+b.dataset.del); rows=rows.filter(r=>r.id!=b.dataset.del); draw(); }
     });
+    tbody.querySelectorAll('[data-edit]').forEach(b=> b.onclick=()=>{ const r=rows.find(x=>x.id==b.dataset.edit); openEditComm(cfg, r, students, smap); });
     tbody.querySelectorAll('[data-std]').forEach(b=> b.onclick=()=>{ if(b.dataset.std) openStudentDetail(+b.dataset.std); });
   }
   draw();
@@ -646,6 +890,28 @@ function fieldHTMLStudent(f, students){
   const [key,label,type]=f;
   if(type==='student'){ const opts=students.map(s=>'<option value="'+s.id+'">'+esc(s.name)+'</option>').join(''); return '<div><label style="display:block;font-size:12px;color:var(--muted)">'+label+'</label><select id="f_'+key+'">'+opts+'</select></div>'; }
   return fieldHTML(f);
+}
+function openEditComm(cfg, row, students, smap){
+  const fields = cfg.fields.map(f=>{
+    let val = row[f[0]]!==undefined && row[f[0]]!==null ? row[f[0]] : '';
+    if(f[2]==='student'){
+      const opts = students.map(s=>'<option value="'+s.id+'"'+(s.id==row.student_id?' selected':'')+'>'+esc(s.name)+'</option>').join('');
+      return '<div class="m-field"><label>'+f[1]+'</label><select id="e_'+f[0]+'">'+opts+'</select></div>';
+    }
+    if(f[2] && f[2].startsWith('select:')){
+      const opts = f[2].split(':')[1].split(',').map(o=>'<option value="'+o+'"'+(o==val?' selected':'')+'>'+o+'</option>').join('');
+      return '<div class="m-field"><label>'+f[1]+'</label><select id="e_'+f[0]+'">'+opts+'</select></div>';
+    }
+    return '<div class="m-field"><label>'+f[1]+'</label><input id="e_'+f[0]+'" type="'+(f[2]||'text')+'" value="'+esc(val)+'"></div>';
+  }).join('');
+  openModal(`<button class="close-x" id="eClose">×</button><div class="modal-title">✏️ 修改家校沟通</div>${fields}
+    <div class="btn-row"><button class="btn ghost" id="eCancel">取消</button><button class="btn" id="eSave">保存</button></div>`);
+  $('#eClose').onclick=hideModal; $('#eCancel').onclick=hideModal;
+  $('#eSave').onclick = async ()=>{
+    const body={}; cfg.fields.forEach(f=>{ const el=document.getElementById('e_'+f[0]); body[f[0]]=el.value; });
+    await api('PATCH','/api/'+cfg.table+'/'+row.id, body);
+    hideModal(); toast('已保存修改'); renderStudentPage(cfg.table);
+  };
 }
 
 // ---------- Todos (edit + confirm delete + restore) ----------
@@ -708,61 +974,196 @@ async function renderTimetable(){
   let termStart = settings.term_start || todayMondayStr();
   let week = currentWeek(termStart);
   let dayDates = dayDatesFor(termStart, week);
+  let maxP = Math.max(6, ...rows.map(r=>r.period));
   content.innerHTML=`<div class="page-title">课程表</div>
     <div class="card">
       <div style="font-weight:600;margin-bottom:8px">📅 周次与日期</div>
-      <div class="form-row">
-        <div><label style="display:block;font-size:12px;color:var(--muted)">当前周次</label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="btn ghost sm" id="wkPrev">‹</button>
-            <span id="wkLabel" style="min-width:64px;text-align:center;font-weight:600">第 ${week} 周</span>
-            <button class="btn ghost sm" id="wkNext">›</button>
-          </div></div>
-        <div><label style="display:block;font-size:12px;color:var(--muted)">学期第1周 · 周一</label><input id="termStart" type="date" value="${termStart}"></div>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-top:4px">💡 修改「学期第1周 周一」可整体平移所有日期；用 ‹ › 切换查看不同周次（课程每周重复，修改任一周均作用于该日次）。</div>
+      <div><label style="display:block;font-size:12px;color:var(--muted)">第一周 · 周一（开学日，可任意修改）</label><input id="termStart" type="date" value="${termStart}"></div>
+      <div style="font-size:12px;color:var(--muted);margin:6px 0 10px">💡 修改「第一周 周一」即设定开学日期，所有周次日期自动推算；用 ‹ › 切换查看不同周次（课程可限定仅某几周显示，见批量排课 / 单格编辑的「适用周次」）。</div>
+      <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px">当前周次</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn ghost sm" id="wkPrev">‹</button>
+          <span id="wkLabel" style="min-width:64px;text-align:center;font-weight:600">第 ${week} 周</span>
+          <button class="btn ghost sm" id="wkNext">›</button>
+        </div></div>
     </div>
-    <div class="filter-bar" id="ttFilter"><span style="font-size:13px;color:var(--muted)">按星期筛选：</span>
-      <span class="chip active" data-d="all">全部</span>${['周一','周二','周三','周四','周五'].map(d=>'<span class="chip" data-d="'+d+'">'+d+'</span>').join('')}</div>
-    <div style="font-size:12px;color:var(--muted);margin:4px 0 10px">💡 点击任意格子可「修改 / 删除」该节课程；节次不限于第六节，可自由增加。</div>
-    <div class="section"><div class="tt-grid" id="ttFull"></div></div>`;
-  let flt='all';
-  function draw(){ const list = flt==='all'? rows : rows.filter(r=>r.day===flt); renderTimetableFull(list, dayDates);
-    $('#ttFull').querySelectorAll('.tt-subj-cell').forEach(c=> c.onclick=()=> openCell(c.dataset.day, +c.dataset.period)); }
+      <div class="tt-layout">
+      <div class="section" id="ttSection"><div class="tt-grid" id="ttFull"></div>
+        <div class="tt-drop-hint">💡 点击任意格子可「修改 / 删除」该节课程；<b>按住拖动</b>某一格课程可移动到其他格子；时间只显示在左侧「节」列；用右上角 <b>＋加一节 / －减一节</b> 调整节数（减节会先确认）。</div>
+        <div class="tt-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn ghost" id="openBatch">⚡ 批量排课</button>
+          <button class="btn ghost" id="resetTt" style="color:#A32D2D;border-color:#A32D2D">🗑 重置课程表</button>
+          <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            <span style="font-size:12px;color:var(--muted)">节数</span>
+            <button class="btn ghost sm" id="periodMinus">－ 减一节</button>
+            <button class="btn ghost sm" id="periodPlus">＋ 加一节</button>
+          </span>
+        </div>
+      </div>
+      <div class="batch-drawer" id="batchDrawer" hidden>
+        <div class="batch-drawer-inner">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div style="font-weight:600">⚡ 批量排课</div>
+            <button class="close-x" id="closeBatch" style="position:static">×</button>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">一次性填入某科目在多天、多节、多周的课程，免去逐个点击。</div>
+          <div class="m-field"><label>科目</label><input id="b_subject" placeholder="如 语文 / 美术"></div>
+          <div class="m-field"><label>从星期</label><select id="b_d1">${['周一','周二','周三','周四','周五','周六','周日'].map(d=>'<option>'+d+'</option>').join('')}</select></div>
+          <div class="m-field"><label>到星期</label><select id="b_d2">${['周一','周二','周三','周四','周五','周六','周日'].map(d=>'<option>'+d+'</option>').join('')}</select></div>
+          <div class="m-field"><label>从第几节</label><input id="b_p1" type="number" min="1" value="1"></div>
+          <div class="m-field"><label>到第几节</label><input id="b_p2" type="number" min="1" value="1"></div>
+          <div class="m-field"><label>从第几周（留空=全学期）</label><input id="b_w1" type="number" min="1" placeholder="如 3"></div>
+          <div class="m-field"><label>到第几周</label><input id="b_w2" type="number" min="1" placeholder="如 10"></div>
+          <div class="m-field"><label>时间（可选，如 08:30-09:10）</label><input id="b_time" placeholder="留空则不填"></div>
+          <button class="btn" id="bFill" style="margin-top:6px;width:100%">一键填入课程表</button>
+          <div id="bMsg" style="font-size:12px;color:var(--green-800);margin-top:6px"></div>
+        </div>
+      </div>`;
+  function draw(){ renderTimetableFull(rows, dayDates, week, maxP);
+    const cells=$('#ttFull').querySelectorAll('.tt-subj-cell');
+    cells.forEach(c=> c.onclick=()=> openCell(c.dataset.day, +c.dataset.period));
+    enableTimetableDnD(cells);
+    $('#ttFull').querySelectorAll('.tt-period-cell').forEach(c=> c.onclick=()=> openPeriodTime(+c.dataset.period)); }
   function openCell(day, period){
     const r=rows.find(x=>x.day===day && x.period===period); const exists=!!r;
+    const wf=exists&&r.week_from!=null? r.week_from : '', wt=exists&&r.week_to!=null? r.week_to : '';
     openModal(`<button class="close-x" id="cClose">×</button><div class="modal-title">${exists?'✏️ 修改课程':'➕ 添加课程'}（${esc(day)} 第${period}节）</div>
       <div class="m-field"><label>科目</label><input id="c_subject" value="${exists?esc(r.subject):''}" placeholder="语文"></div>
-      <div class="m-field"><label>时间（如 08:30-09:10）</label><input id="c_time" value="${exists?esc(r.time||''):''}"></div>
+      <div class="m-field"><label>适用周次（留空=全学期，如 3 到 10）</label>
+        <div style="display:flex;gap:8px"><input id="c_wf" type="number" min="1" placeholder="从" value="${wf}"><input id="c_wt" type="number" min="1" placeholder="到" value="${wt}"></div></div>
       <div class="m-field"><label>备注</label><input id="c_note" value="${exists?esc(r.note||''):''}"></div>
       <div class="btn-row"><button class="btn ghost" id="cCancel">取消</button>${exists?'<button class="btn" id="cDelete" style="background:#A32D2D">删除</button>':''}<button class="btn" id="cSave">${exists?'保存':'添加'}</button></div>`);
     $('#cClose').onclick=hideModal; $('#cCancel').onclick=hideModal;
     if(exists){ $('#cDelete').onclick=async()=>{ if(await confirmDialog('确定删除该节课程？')){ await api('DELETE','/api/timetable/'+r.id); rows=rows.filter(x=>x.id!=r.id); hideModal(); draw(); } }; }
     $('#cSave').onclick=async()=>{
-      const body={day, period, subject:$('#c_subject').value, time:$('#c_time').value||'', note:$('#c_note').value||''};
+      const wfv=$('#c_wf').value.trim(), wtv=$('#c_wt').value.trim();
+      const body={day, period, subject:$('#c_subject').value, time: exists? (r.time||'') : '', note:$('#c_note').value||'',
+        week_from: wfv? +wfv : null, week_to: wtv? +wtv : null};
       if(exists){ const upd=await api('PATCH','/api/timetable/'+r.id, body); const i=rows.findIndex(x=>x.id==r.id); if(i>-1) rows[i]=Object.assign(rows[i],upd); }
       else { const c=await api('POST','/api/timetable', body); rows.push(c); }
       hideModal(); draw();
     };
   }
+  function openPeriodTime(p){
+    const days=['周一','周二','周三','周四','周五'];
+    const cur = days.map(d=>{ const c=rows.find(x=>x.day===d && x.period===p); return c&&c.time; }).find(t=>t) || '';
+    openModal(`<button class="close-x" id="ptClose">×</button><div class="modal-title">⏰ 编辑第 ${p} 节 时间</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">时间将应用到该节所有天的课程（同一节通常时间相同）。</div>
+      <div class="m-field"><label>时间（如 08:30-09:10）</label><input id="pt_time" value="${esc(cur)}" placeholder="留空则不填"></div>
+      <div class="btn-row"><button class="btn ghost" id="ptCancel">取消</button><button class="btn" id="ptSave">保存</button></div>`);
+    $('#ptClose').onclick=hideModal; $('#ptCancel').onclick=hideModal;
+    $('#ptSave').onclick=async()=>{
+      const t=$('#pt_time').value.trim();
+      const targets=rows.filter(x=>x.period===p);
+      for(const c of targets){ await api('PATCH','/api/timetable/'+c.id, {day:c.day,period:String(c.period),subject:c.subject,time:t,note:c.note||'',week_from:c.week_from??null,week_to:c.week_to??null}); c.time=t; }
+      hideModal(); draw(); toast('已更新第'+p+'节时间');
+    };
+  }
   function recompute(){ dayDates=dayDatesFor(termStart, week); $('#wkLabel').textContent='第 '+week+' 周'; draw(); }
+  $('#periodPlus').onclick=async()=>{ maxP++; draw(); toast('已增加为 '+maxP+' 节'); };
+  $('#periodMinus').onclick=async()=>{
+    if(maxP<=1){ toast('至少保留 1 节'); return; }
+    const ok=await confirmDialog('确定减少一节（变为 '+ (maxP-1) +' 节）吗？第 '+maxP+' 节若有课程将被删除，且不可恢复。', {title:'－ 确认减一节', yes:'确定减少', danger:true});
+    if(!ok) return;
+    // hapus course di baris terakhir (period == maxP)
+    const toDel=rows.filter(x=>x.period===maxP);
+    for(const r of toDel){ await api('DELETE','/api/timetable/'+r.id); }
+    rows=rows.filter(x=>x.period!==maxP);
+    maxP--; draw(); toast('已减少为 '+maxP+' 节');
+  };
   $('#wkPrev').onclick=()=>{ week=Math.max(1, week-1); recompute(); };
   $('#wkNext').onclick=()=>{ week++; recompute(); };
-  $('#termStart').onchange=async()=>{ termStart=$('#termStart').value; if(termStart){ await api('POST','/api/settings',{term_start:termStart}); week=currentWeek(termStart); recompute(); } };
-  $('#ttFilter').querySelectorAll('.chip').forEach(c=> c.onclick=()=>{ $('#ttFilter').querySelectorAll('.chip').forEach(x=>x.classList.remove('active')); c.classList.add('active'); flt=c.dataset.d; draw(); });
+  $('#termStart').onchange=async()=>{ const nv=$('#termStart').value; if(!nv) return;
+    const ok=await confirmDialog('确定把「第一周 · 周一（开学日）」改为 '+nv+' 吗？\n所有周次与日期将自动重新推算。', {title:'📅 确认修改开学日期', yes:'确定修改', danger:true});
+    if(!ok){ $('#termStart').value=termStart; return; }
+    termStart=nv; await api('POST','/api/settings',{term_start:termStart}); week=currentWeek(termStart); recompute();
+    toast('已更新开学日期为 '+nv); };
+  $('#bFill').onclick=async()=>{
+    const subj=$('#b_subject').value.trim(); if(!subj){ $('#bMsg').style.color='#A32D2D'; $('#bMsg').textContent='请填写科目'; return; }
+    const days=['周一','周二','周三','周四','周五','周六','周日'];
+    const d1=days.indexOf($('#b_d1').value), d2=days.indexOf($('#b_d2').value);
+    const p1=Math.max(1,+$('#b_p1').value||1), p2=Math.max(1,+$('#b_p2').value||1);
+    const w1v=$('#b_w1').value.trim(), w2v=$('#b_w2').value.trim();
+    const wf=w1v? Math.max(1,+w1v):null, wt=w2v? Math.max(1,+w2v):null;
+    const t=$('#b_time').value.trim();
+    const lo=Math.min(d1,d2), hi=Math.max(d1,d2), pl=Math.min(p1,p2), ph=Math.max(p1,p2);
+    let cnt=0;
+    for(let di=lo; di<=hi; di++){ for(let p=pl; p<=ph; p++){
+      const day=days[di]; const ex=rows.find(x=>x.day===day && x.period===p);
+      if(ex){ await api('PATCH','/api/timetable/'+ex.id, {day,period:String(p),subject:subj,time:t,note:ex.note||'',week_from:wf,week_to:wt}); ex.subject=subj; ex.time=t; ex.week_from=wf; ex.week_to=wt; }
+      else { const c=await api('POST','/api/timetable', {day,period:String(p),subject:subj,time:t,note:'',week_from:wf,week_to:wt}); rows.push(c); }
+      cnt++;
+    } }
+    const wtxt = (wf||wt)? ('（第'+(wf||'?')+'–'+(wt||'?')+'周）') : '（全学期）';
+    $('#bMsg').style.color='var(--green-800)'; $('#bMsg').textContent='已填入 '+subj+wtxt+'，共 '+cnt+' 格';
+    draw();
+  };
+  $('#openBatch').onclick=()=>{ const d=$('#batchDrawer'); d.hidden=false; requestAnimationFrame(()=> d.classList.add('show')); $('#ttSection').classList.add('with-drawer'); };
+  $('#closeBatch').onclick=()=>{ const d=$('#batchDrawer'); d.classList.remove('show'); $('#ttSection').classList.remove('with-drawer'); setTimeout(()=> d.hidden=true, 260); };
+  $('#resetTt').onclick=async()=>{
+    const ok=await confirmDialog('确定要清空整张课程表吗？所有已排课程将被删除，且不可恢复。', {title:'🗑 确认重置课程表', yes:'确定清空', danger:true});
+    if(!ok) return;
+    await api('DELETE','/api/timetable/reset'); rows=[]; draw();
+    toast('课程表已重置');
+  };
   draw();
 }
-function renderTimetableFull(rows, dayDates){
+function renderTimetableFull(rows, dayDates, week, maxP){
   const days=['周一','周二','周三','周四','周五'];
-  const maxP=Math.max(6, ...rows.map(r=>r.period));
-  let h='<div class="tt-cell head">节</div>'+days.map(d=>'<div class="tt-cell head"><div>'+d+'</div><div class="tt-date">'+(dayDates[d]||'')+'</div></div>').join('');
-  const map={}; rows.forEach(r=>{ (map[r.day]=map[r.day]||{})[r.period]=r; });
+  // filter: tampilkan sel yang berlaku di minggu saat ini (week_from/to null = sepanjang semester)
+  const vis = rows.filter(r=>{
+    if(r.week_from==null && r.week_to==null) return true;
+    const wf = r.week_from!=null? r.week_from : 1;
+    const wt = r.week_to!=null? r.week_to : 999;
+    return week>=wf && week<=wt;
+  });
+  let h='<div class="tt-cell head">节 / 时间</div>'+days.map(d=>'<div class="tt-cell head"><div>'+d+'</div><div class="tt-date">'+(dayDates[d]||'')+'</div></div>').join('');
+  const map={}; vis.forEach(r=>{ (map[r.day]=map[r.day]||{})[r.period]=r; });
   for(let p=1;p<=maxP;p++){
-    h+='<div class="tt-cell head">第'+p+'节</div>';
+    // time di kolom pertama saja (anggap waktu sama per 节)
+    const tOfP = days.map(d=> map[d]&&map[d][p]&&map[d][p].time).find(t=>t) || '';
+    h+='<div class="tt-cell head tt-period-cell" data-period="'+p+'"><div>第'+p+'节</div>'+(tOfP?'<div class="tt-time">'+esc(tOfP)+'</div>':'')+'<div class="tt-period-edit">⏰ 改时间</div></div>';
     days.forEach(d=>{ const c=map[d]&&map[d][p];
-      h+='<div class="tt-cell subj tt-subj-cell" data-day="'+d+'" data-period="'+p+'">'+(c? esc(c.subject)+'<div class="tt-time">'+(c.time||'')+'</div>'+(c.note?'<div class="tt-time">'+esc(c.note)+'</div>':'') :'＋ 点击添加')+'</div>'; });
+      const wbadge = (c && (c.week_from!=null || c.week_to!=null))? '<div class="tt-time">第'+(c.week_from||'?')+'–'+(c.week_to||'?')+'周</div>' : '';
+      h+='<div class="tt-cell subj tt-subj-cell" data-day="'+d+'" data-period="'+p+'">'+(c? esc(c.subject)+(c.note?'<div class="tt-time">'+esc(c.note)+'</div>':'')+wbadge :'＋ 点击添加')+'</div>'; });
   }
   $('#ttFull').innerHTML=h;
+}
+// Drag & drop to move a course between timetable cells
+function enableTimetableDnD(cells){
+  let drag=null;
+  cells.forEach(c=>{
+    c.draggable=true;
+    c.ondragstart=e=>{ drag=c; c.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain', c.dataset.day+'|'+c.dataset.period);}catch(_){} };
+    c.ondragend=()=>{ c.classList.remove('dragging'); cells.forEach(x=>x.classList.remove('dragover')); drag=null; };
+    c.ondragover=e=>{ if(drag && drag!==c){ e.preventDefault(); c.classList.add('dragover'); } };
+    c.ondragleave=()=> c.classList.remove('dragover');
+    c.ondrop=e=>{ e.preventDefault(); c.classList.remove('dragover');
+      if(!drag || drag===c) return;
+      const fromDay=drag.dataset.day, fromP=+drag.dataset.period, toDay=c.dataset.day, toP=+c.dataset.period;
+      if(fromDay===toDay && fromP===toP) return;
+      const moving=rows.find(x=>x.day===fromDay && x.period===fromP);
+      const target=rows.find(x=>x.day===toDay && x.period===toP);
+      (async()=>{
+        if(moving && target){
+          // swap the two cells
+          await api('PATCH','/api/timetable/'+moving.id,{day:toDay,period:String(toP),subject:moving.subject,time:moving.time||'',note:moving.note||'',week_from:moving.week_from??null,week_to:moving.week_to??null});
+          await api('PATCH','/api/timetable/'+target.id,{day:fromDay,period:String(fromP),subject:target.subject,time:target.time||'',note:target.note||'',week_from:target.week_from??null,week_to:target.week_to??null});
+          moving.day=toDay; moving.period=toP; target.day=fromDay; target.period=fromP;
+        } else if(moving && !target){
+          // move into empty cell
+          await api('PATCH','/api/timetable/'+moving.id,{day:toDay,period:String(toP),subject:moving.subject,time:moving.time||'',note:moving.note||'',week_from:moving.week_from??null,week_to:moving.week_to??null});
+          moving.day=toDay; moving.period=toP;
+        } else if(!moving && target){
+          // from empty -> occupied: push target to source (treat as swap with empty)
+          await api('PATCH','/api/timetable/'+target.id,{day:fromDay,period:String(fromP),subject:target.subject,time:target.time||'',note:target.note||'',week_from:target.week_from??null,week_to:target.week_to??null});
+          target.day=fromDay; target.period=fromP;
+        }
+        draw();
+        toast('已移动课程');
+      })();
+    };
+  });
 }
 
 // ---------- AI assistant (minimize + close) ----------
@@ -810,6 +1211,7 @@ function showLogin(){
   u.addEventListener('keydown', e=>{ if(e.key==='Enter'){ p.focus(); } });
 }
 function boot(){
+  mountFloating();
   initProfile(); initTopDate(); initAI(); start();
 }
 if(isAuthed()){ boot(); } else { showLogin(); }

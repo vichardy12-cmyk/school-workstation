@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS scores (
   exam_name TEXT,
   subject TEXT,
   score REAL,
-  date TEXT
+  date TEXT,
+  note TEXT
 );
 CREATE TABLE IF NOT EXISTS todos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +127,9 @@ CREATE TABLE IF NOT EXISTS timetable (
   period INTEGER,
   subject TEXT,
   time TEXT,
-  note TEXT
+  note TEXT,
+  week_from INTEGER,
+  week_to INTEGER
 );
 CREATE TABLE IF NOT EXISTS exams (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,6 +140,19 @@ CREATE TABLE IF NOT EXISTS exams (
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
+);
+CREATE TABLE IF NOT EXISTS profile (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  teacher TEXT,
+  class TEXT,
+  avatar_path TEXT,
+  avatar_data TEXT
+);
+CREATE TABLE IF NOT EXISTS homework_students (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  homework_id INTEGER,
+  student_id INTEGER,
+  submitted INTEGER DEFAULT 0
 );
 `;
 
@@ -270,6 +286,11 @@ async function init() {
     db = new SQL.Database(bytes || undefined);
     db.run(SCHEMA);
     try { db.run('ALTER TABLE timetable ADD COLUMN time TEXT'); } catch (e) { /* already exists */ }
+    try { db.run('ALTER TABLE timetable ADD COLUMN week_from INTEGER'); } catch (e) { /* already exists */ }
+    try { db.run('ALTER TABLE timetable ADD COLUMN week_to INTEGER'); } catch (e) { /* already exists */ }
+    try { db.run('ALTER TABLE scores ADD COLUMN note TEXT'); } catch (e) { /* already exists */ }
+    try { db.run('ALTER TABLE profile ADD COLUMN avatar_path TEXT'); } catch (e) { /* already exists */ }
+    try { db.run('ALTER TABLE profile ADD COLUMN avatar_data TEXT'); } catch (e) { /* already exists */ }
     try { db.run("UPDATE timetable SET time = CASE period WHEN 1 THEN '08:30' WHEN 2 THEN '09:20' WHEN 3 THEN '10:20' WHEN 4 THEN '11:10' WHEN 5 THEN '14:30' WHEN 6 THEN '15:20' ELSE '' END WHERE time IS NULL OR time = ''"); } catch (e) {}
     // backfill exams table from existing scores (for DBs created before exams existed)
     try {

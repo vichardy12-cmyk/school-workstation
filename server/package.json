@@ -1,0 +1,15 @@
+{
+  "name": "school-workstation",
+  "version": "1.0.0",
+  "description": "小学语文教师工作台 - personal work station for elementary Chinese teachers",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^2.2.0",
+    "sql.js": "^1.10.3"
+  }
+}
