@@ -4,7 +4,7 @@ services:
   - type: web
     name: school-workstation
     runtime: node
-    region: oregon          # ganti ke singapore kalau mau lebih dekat (pilih saat buat manual)
+    region: singapore       # dekat China
     plan: free
     branch: main            # pakai "master" kalau repo kamu pakai master
     buildCommand: npm install
