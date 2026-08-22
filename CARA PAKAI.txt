@@ -1,0 +1,27 @@
+CARA MENJALANKAN SERVER BARU (dengan fitur 备注 yang sudah fix)
+
+1. Tutup dulu server lama (kalau masih jalan):
+   - Cari jendela Command Prompt / terminal yang menunjukkan "小学语文教师工作台 running at http://..."
+   - Tekan Ctrl + C di jendela itu, lalu tutup.
+
+2. Jalankan server baru:
+   - Buka folder ini: school-workstation-new
+   - Double-click file: "Jalankan Server Baru.bat"
+   - Tunggu sampai muncul tulisan: "小学语文教师工作台 running at http://0.0.0.0:3000"
+
+3. Buka aplikasi di browser:
+   - Buka Google Chrome / Edge / Firefox
+   - Ketik: http://localhost:3000
+   - Tekan Enter
+   - Jangan lupa hard refresh: tekan Ctrl + F5
+
+4. Coba fitur 备注:
+   - Buka menu 成绩管理
+   - Klik 修改 pada salah satu siswa
+   - Isi 分数 dan 备注
+   - Klik 保存 → 确认保存
+   - Kalau berhasil, kolom 备注 akan muncul teksnya (bukan "—")
+
+Catatan:
+- Server ini pakai port 3000. Pastikan tidak ada server lain yang pakai port 3000.
+- Data disimpan di server/data/school.db. Folder data akan dibuat otomatis saat pertama kali jalan.
