@@ -141,6 +141,10 @@ CREATE TABLE IF NOT EXISTS settings (
 `;
 
 function seed() {
+  // idempotent: don't re-seed if students already exist (handles restart on ephemeral hosts)
+  const existing = get('SELECT COUNT(*) AS c FROM students');
+  if (existing && existing.c > 0) return;
+
   const names = ['林晓彤','陈宇航','王梓萱','李浩然','张子涵','刘思琪','黄俊杰','周雨欣','吴佳怡','徐子轩','孙梦瑶','胡天磊','朱欣怡','高梓墨','何雨泽','郭子睿','罗欣妍','梁俊熙','宋佳琪','唐艺涵','韩雪儿','冯子轩','邓雅婷','曹明轩','彭诗涵','萧宇辰','潘梦琪','蒋欣怡','余泽宇','杜雨桐','钟子默','田佳欣','范俊豪','袁诗琪','石梓萱'];
   names.forEach((nm, i) => {
     const surname = nm[0];
@@ -249,11 +253,6 @@ function seed() {
     });
   });
 
-  // settings: 学期第一周 周一 (用于课程表周次与日期计算)
-  const ms = new Date();
-  const mdow = (ms.getDay() + 6) % 7;
-  const mmon = new Date(ms); mmon.setDate(ms.getDate() - mdow);
-  insert("INSERT INTO settings (key,value) VALUES ('term_start', ?)", [mmon.toISOString().slice(0, 10)]);
 }
 
 function addDays(date, n) {
