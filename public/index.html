@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>小学语文教师工作台</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="profile" id="profile" title="点击更换头像">
+        <div class="avatar" id="avatar">林</div>
+        <div class="profile-meta">
+          <div class="profile-name" id="teacherName">林老师</div>
+          <div class="profile-sub" id="teacherClass">三(2)班 · 语文</div>
+        </div>
+      </div>
+      <div class="topbar-title">小学语文教师工作台</div>
+      <div class="topbar-right">
+        <div class="topbar-date" id="topDate"></div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" id="sidebar">
+        <a class="nav-item active" data-route="dashboard"><span class="nav-ico">🏠</span><span>工作台</span></a>
+        <a class="nav-item" data-route="students"><span class="nav-ico">👧</span><span>学生管理</span></a>
+        <a class="nav-item" data-route="lessons"><span class="nav-ico">📖</span><span>教案管理</span></a>
+        <a class="nav-item" data-route="homework"><span class="nav-ico">📝</span><span>作业管理</span></a>
+        <a class="nav-item" data-route="scores"><span class="nav-ico">📊</span><span>成绩管理</span></a>
+        <a class="nav-item" data-route="communications"><span class="nav-ico">💬</span><span>家校沟通</span></a>
+        <a class="nav-item" data-route="notices"><span class="nav-ico">📢</span><span>通知公告</span></a>
+        <a class="nav-item" data-route="todos"><span class="nav-ico">✅</span><span>待办事项</span></a>
+        <a class="nav-item" data-route="timetable"><span class="nav-ico">📅</span><span>课程表</span></a>
+        <a class="nav-item" data-route="resources"><span class="nav-ico">📚</span><span>教学资料</span></a>
+        <a class="nav-item" data-route="events"><span class="nav-ico">🗓️</span><span>日程安排</span></a>
+      </aside>
+      <main class="content" id="content"><!-- rendered by app.js --></main>
+    </div>
+
+    <!-- Floating AI assistant -->
+    <div class="ai-fab" id="aiFab">💬 AI 小助手</div>
+    <div class="ai-panel" id="aiPanel" hidden>
+      <div class="ai-head">
+        <span>🤖 AI 小助手 · 小文</span>
+        <div class="ai-head-btns">
+          <button class="ai-min" id="aiMin" title="最小化">—</button>
+          <button class="ai-close" id="aiClose" title="关闭">×</button>
+        </div>
+      </div>
+      <div class="ai-msgs" id="aiMsgs"></div>
+      <div class="ai-input">
+        <input id="aiText" placeholder="问问小文：写家长消息 / 设计教案…" />
+        <button id="aiSend">发送</button>
+      </div>
+    </div>
+
+    <!-- Student detail modal -->
+    <div class="modal-mask" id="modalMask" hidden>
+      <div class="modal" id="modal"></div>
+    </div>
+  </div>
+
+  <!-- Login gate -->
+  <div class="login-mask" id="loginMask" hidden>
+    <div class="login-card">
+      <div class="login-logo">🌿</div>
+      <div class="login-title">小学语文教师工作台</div>
+      <div class="login-sub">请先登录后再进入</div>
+      <div class="login-field"><label>用户名</label><input id="loginUser" type="text" autocomplete="username" placeholder="请输入用户名"></div>
+      <div class="login-field"><label>密码</label><input id="loginPass" type="password" autocomplete="current-password" placeholder="请输入密码"></div>
+      <label class="login-remember"><input type="checkbox" id="rememberMe"> 记住我（本机自动登录）</label>
+      <div class="login-err" id="loginErr"></div>
+      <button class="btn login-btn" id="loginBtn">登 录</button>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

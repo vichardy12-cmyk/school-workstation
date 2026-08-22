@@ -1,0 +1,16 @@
+{
+  "name": "school-workstation",
+  "version": "1.0.0",
+  "description": "小学语文教师工作台 - Node.js + Express + sql.js (SQLite)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "4.22.2",
+    "sql.js": "1.14.2"
+  }
+}

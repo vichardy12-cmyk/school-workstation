@@ -1,0 +1,17 @@
+# Render.com deployment config (free tier Web Service)
+# Docs: https://render.com/docs/deploy-node-express-app
+services:
+  - type: web
+    name: school-workstation
+    runtime: node
+    region: oregon          # ganti ke singapore kalau mau lebih dekat (pilih saat buat manual)
+    plan: free
+    branch: main            # pakai "master" kalau repo kamu pakai master
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
