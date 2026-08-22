@@ -1,7 +1,7 @@
 {
   "name": "school-workstation",
   "version": "1.0.0",
-  "description": "小学语文教师工作台 - Node.js + Express + sql.js (SQLite)",
+  "description": "小学语文教师工作台 - Node.js + Express + PostgreSQL (Supabase)",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js"
@@ -12,6 +12,6 @@
   "dependencies": {
     "express": "4.22.2",
     "multer": "^2.2.0",
-    "sql.js": "1.14.2"
+    "pg": "^8.13.1"
   }
 }
