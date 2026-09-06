@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS students (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   gender TEXT,
-  seat_no INTEGER,
+  exam_no INTEGER,
   group_name TEXT,
   parent_name TEXT,
   parent_phone TEXT,
@@ -165,7 +165,7 @@ async function seed() {
     const parent = (i % 2 === 0 ? surname + '爸爸' : surname + '妈妈');
     const phone = '138' + String(10000000 + i * 137).slice(0, 8);
     const notesList = ['活泼好问', '书写工整', '需多鼓励', '责任心强', '阅读理解偏弱', '', '乐于助人', '注意力易分散'];
-    await insert('INSERT INTO students (name,gender,seat_no,group_name,parent_name,parent_phone,notes) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    await insert('INSERT INTO students (name,gender,exam_no,group_name,parent_name,parent_phone,notes) VALUES ($1,$2,$3,$4,$5,$6,$7)',
       [nm, gender, i + 1, '第' + ((i % 6) + 1) + '组', parent, phone, notesList[i % notesList.length]]);
   }
 
@@ -274,6 +274,9 @@ async function init() {
   if (ready) return ready;
   ready = (async () => {
     await pool.query(SCHEMA);
+    // migrate: seat_no -> exam_no (idempotent, only for pre-existing tables)
+    const col = await get("SELECT column_name FROM information_schema.columns WHERE table_name='students' AND column_name='seat_no'");
+    if (col) { await run('ALTER TABLE students RENAME COLUMN seat_no TO exam_no'); }
     // ensure term_start setting exists
     const ts = await get("SELECT value FROM settings WHERE key='term_start'");
     if (!ts) {

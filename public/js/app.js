@@ -525,7 +525,7 @@ function fieldHTML(f){
 async function renderStudents(){
   let students = await getJSON('/api/students');
   const groups = [...new Set(students.map(s=>s.group_name))].sort();
-  let sortKey='seat_no', sortDir='asc';
+  let sortKey='exam_no', sortDir='asc';
   const sArrow=k=> (k===sortKey)?(sortDir==='asc'?' ▲':' ▼'):'';
   content.innerHTML = `<div class="page-title">学生管理</div>
     <div class="card">
@@ -533,7 +533,7 @@ async function renderStudents(){
       <div class="form-row" id="addForm">
         <div><label style="display:block;font-size:12px;color:var(--muted)">姓名</label><input id="f_name" type="text" placeholder="姓名" /></div>
         <div><label style="display:block;font-size:12px;color:var(--muted)">性别</label><select id="f_gender">${['男','女'].map(o=>'<option>'+o+'</option>').join('')}</select></div>
-        <div><label style="display:block;font-size:12px;color:var(--muted)">座号</label><input id="f_seat_no" type="number" /></div>
+        <div><label style="display:block;font-size:12px;color:var(--muted)">考号</label><input id="f_exam_no" type="number" /></div>
         <div><label style="display:block;font-size:12px;color:var(--muted)">小组</label><input id="f_group_name" type="text" placeholder="第1组" /></div>
         <div><label style="display:block;font-size:12px;color:var(--muted)">家长</label><input id="f_parent_name" type="text" /></div>
         <div><label style="display:block;font-size:12px;color:var(--muted)">电话</label><input id="f_parent_phone" type="text" /></div>
@@ -546,7 +546,7 @@ async function renderStudents(){
       <span class="chip active" data-g="all">全部</span>
       ${groups.map(g=>'<span class="chip" data-g="'+esc(g)+'">'+esc(g)+'</span>').join('')}
     </div>
-    <div class="section"><table><thead><tr><th>姓名</th><th>性别</th><th>座号</th><th>小组</th><th>家长</th><th>电话</th><th>备注</th><th>操作</th></tr></thead>
+    <div class="section"><table><thead><tr><th>姓名</th><th>性别</th><th>考号</th><th>小组</th><th>家长</th><th>电话</th><th>备注</th><th>操作</th></tr></thead>
       <tbody id="tbody"></tbody></table>
       <div style="font-size:12px;color:var(--muted);margin-top:8px">💡 点击学生姓名可查看其「成绩 / 家校沟通 / 作业」完整档案；点「修改」可编辑，点「删除」需确认。</div>
     </div>`;
@@ -557,13 +557,13 @@ async function renderStudents(){
     const dir = sortDir==='asc'?1:-1;
     const sorted=[...list].sort((a,b)=>{
       if(sortKey==='name') return (a.name||'').localeCompare(b.name||'','zh')*dir;
-      if(sortKey==='seat_no') return (((+a.seat_no)||0)-((+b.seat_no)||0))*dir;
+      if(sortKey==='exam_no') return (((+a.exam_no)||0)-((+b.exam_no)||0))*dir;
       if(sortKey==='group') return (a.group_name||'').localeCompare(b.group_name||'','zh')*dir;
       return 0;
     });
     tbody.innerHTML = sorted.map(r=>`<tr>
       <td><span class="name-link" data-std="${r.id}">${esc(r.name)}</span></td>
-      <td>${esc(r.gender)}</td><td>${esc(r.seat_no)}</td><td>${esc(r.group_name)}</td>
+      <td>${esc(r.gender)}</td><td>${esc(r.exam_no)}</td><td>${esc(r.group_name)}</td>
       <td>${esc(r.parent_name)}</td><td>${esc(r.parent_phone)}</td><td>${esc(r.notes)}</td>
       <td><button class="btn ghost sm" data-edit="${r.id}">修改</button> <button class="del" data-del="${r.id}">删除</button></td></tr>`).join('');
     tbody.querySelectorAll('[data-std]').forEach(b=> b.onclick=()=>openStudentDetail(+b.dataset.std));
@@ -580,7 +580,7 @@ async function renderStudents(){
     openModal(`<button class="close-x" id="eClose">×</button><div class="modal-title">✏️ 修改学生</div>
       <div class="m-field"><label>姓名</label><input id="e_name" value="${esc(s.name)}"></div>
       <div class="m-field"><label>性别</label><select id="e_gender">${['男','女'].map(o=>`<option ${o===s.gender?'selected':''}>${o}</option>`).join('')}</select></div>
-      <div class="m-field"><label>座号</label><input id="e_seat_no" type="number" value="${esc(s.seat_no)}"></div>
+      <div class="m-field"><label>考号</label><input id="e_exam_no" type="number" value="${esc(s.exam_no)}"></div>
       <div class="m-field"><label>小组</label><input id="e_group_name" value="${esc(s.group_name)}"></div>
       <div class="m-field"><label>家长</label><input id="e_parent_name" value="${esc(s.parent_name)}"></div>
       <div class="m-field"><label>电话</label><input id="e_parent_phone" value="${esc(s.parent_phone)}"></div>
@@ -588,7 +588,7 @@ async function renderStudents(){
       <div class="btn-row"><button class="btn ghost" id="eCancel">取消</button><button class="btn" id="eSave">保存</button></div>`);
     $('#eClose').onclick=hideModal; $('#eCancel').onclick=hideModal;
     $('#eSave').onclick=async()=>{
-      const body={name:$('#e_name').value, gender:$('#e_gender').value, seat_no:+$('#e_seat_no').value,
+      const body={name:$('#e_name').value, gender:$('#e_gender').value, exam_no:+$('#e_exam_no').value,
         group_name:$('#e_group_name').value, parent_name:$('#e_parent_name').value, parent_phone:$('#e_parent_phone').value, notes:$('#e_notes').value};
       const upd=await api('PATCH','/api/students/'+id, body);
       const i=students.findIndex(x=>x.id==id); if(i>-1) students[i]=Object.assign(students[i],upd);
@@ -607,10 +607,10 @@ async function renderStudents(){
     c.classList.add('active'); flt=c.dataset.g; draw();
   });
   $('#addBtn').onclick = async ()=>{
-    const body={}; ['name','gender','seat_no','group_name','parent_name','parent_phone','notes'].forEach(k=> body[k]=document.getElementById('f_'+k).value);
+    const body={}; ['name','gender','exam_no','group_name','parent_name','parent_phone','notes'].forEach(k=> body[k]=document.getElementById('f_'+k).value);
     const created = await api('POST','/api/students', body);
     students.unshift(created); draw();
-    ['name','seat_no','group_name','parent_name','parent_phone','notes'].forEach(k=> document.getElementById('f_'+k).value='');
+    ['name','exam_no','group_name','parent_name','parent_phone','notes'].forEach(k=> document.getElementById('f_'+k).value='');
   };
 }
 
@@ -623,7 +623,7 @@ async function openStudentDetail(id){
   const hwRows = d.homework.length? d.homework.map(x=>`<div class="m-row"><span>${esc(x.title)}</span><span>${esc(x.due_date)} · ${statusTag(x.status)}</span></div>`).join('') : '<div class="m-empty">暂无作业</div>';
   openModal(`<button class="close-x" id="modalClose">×</button>
     <h2>${esc(s.name)} 的档案</h2>
-    <div class="modal-sub">${esc(s.gender)} · 座号 ${esc(s.seat_no)} · ${esc(s.group_name)} · 家长：${esc(s.parent_name)}（${esc(s.parent_phone)}）</div>
+    <div class="modal-sub">${esc(s.gender)} · 考号 ${esc(s.exam_no)} · ${esc(s.group_name)} · 家长：${esc(s.parent_name)}（${esc(s.parent_phone)}）</div>
     <div class="modal-sub">备注：${esc(s.notes||'—')}</div>
     <div class="m-section"><h4>📊 成绩记录（${d.scores.length} 条）</h4>${scoreRows}</div>
     <div class="m-section"><h4>💬 家校沟通（${d.communications.length} 条）</h4>${commRows}</div>
@@ -634,7 +634,7 @@ async function openStudentDetail(id){
 // ---------- Scores (exam definition + per-exam score entry) ----------
 async function renderScores(){
   let [scores, students, exams] = await Promise.all([getJSON('/api/scores'), getJSON('/api/students'), getJSON('/api/exams')]);
-  const smap={}; const gmap={}; const seatmap={}; students.forEach(s=>{smap[s.id]=s.name; gmap[s.id]=s.group_name; seatmap[s.id]=s.seat_no;});
+  const smap={}; const gmap={}; const seatmap={}; students.forEach(s=>{smap[s.id]=s.name; gmap[s.id]=s.group_name; seatmap[s.id]=s.exam_no;});
   const groups = [...new Set(students.map(s=>s.group_name).filter(Boolean))];
   let cur = exams[0] ? exams[0].name : '';
   let curGrp = 'all';
@@ -656,7 +656,7 @@ async function renderScores(){
     </div>
     <div class="section"><div id="examTable"></div></div>`;
 
-  let sortKey='seat_no', sortDir='asc';
+  let sortKey='exam_no', sortDir='asc';
   function drawExam(){
     if(!cur){ $('#examTable').innerHTML='<div class="exam-empty">请先在上方添加或选择一场考试。</div>'; return; }
     const list = scores.filter(s=>s.exam_name===cur);
@@ -678,7 +678,7 @@ async function renderScores(){
     const dir = sortDir==='asc'?1:-1;
     const sorted=[...filtered].sort((a,b)=>{
       if(sortKey==='name') return (smap[a.student_id]||'').localeCompare(smap[b.student_id]||'','zh')*dir;
-      if(sortKey==='seat_no') return (((+seatmap[a.student_id])||0)-((+seatmap[b.student_id])||0))*dir;
+      if(sortKey==='exam_no') return (((+seatmap[a.student_id])||0)-((+seatmap[b.student_id])||0))*dir;
       if(sortKey==='score') return (((+a.score)||-1)-((+b.score)||-1))*dir;
       return 0;
     });
@@ -690,11 +690,11 @@ async function renderScores(){
       </div>
       <table><thead><tr>
         <th class="sortable" data-sort="name">学生${arrow('name')}</th>
-        <th class="sortable" data-sort="seat_no">座号${arrow('seat_no')}</th>
+        <th class="sortable" data-sort="exam_no">考号${arrow('exam_no')}</th>
         <th class="sortable" data-sort="score">分数${arrow('score')}</th>
         <th>科目</th><th>备注</th><th>操作</th>
       </tr></thead><tbody id="sbody"></tbody></table>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px">✏️ 点击表头「学生 / 座号 / 分数」可升序 ▲ / 降序 ▼ 切换排序；点每行「修改」可录入或调整分数与备注。</div>`;
+      <div style="font-size:12px;color:var(--muted);margin-top:6px">✏️ 点击表头「学生 / 考号 / 分数」可升序 ▲ / 降序 ▼ 切换排序；点每行「修改」可录入或调整分数与备注。</div>`;
     const tb=$('#sbody');
     tb.innerHTML=sorted.map(r=>`<tr>
       <td>${esc(smap[r.student_id]||'-')}</td>

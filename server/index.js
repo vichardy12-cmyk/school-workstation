@@ -21,7 +21,7 @@ function ph(n) {
 
 // table column whitelist for safe inserts
 const COLS = {
-  students: ['name', 'gender', 'seat_no', 'group_name', 'parent_name', 'parent_phone', 'notes'],
+  students: ['name', 'gender', 'exam_no', 'group_name', 'parent_name', 'parent_phone', 'notes'],
   lessons: ['title', 'unit', 'lesson_date', 'objectives', 'content', 'status'],
   homework: ['title', 'due_date', 'description', 'status'],
   scores: ['student_id', 'exam_name', 'subject', 'score', 'date', 'note'],
